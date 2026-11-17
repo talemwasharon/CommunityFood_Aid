@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Community Food Aid – Sign in</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main class="login">
+  <h1>Community Food Aid</h1>
+  <p>Sign in as a relief provider or a registered food provider.</p>
+  <form id="f">
+    <label>Email <input type="email" id="email" required autocomplete="username"></label>
+    <label>Password <input type="password" id="password" required autocomplete="current-password"></label>
+    <div class="msg" id="msg" role="alert"></div>
+    <button type="submit">Sign in</button>
+  </form>
+</main>
+<script>
+document.getElementById('f').addEventListener('submit', async e => {
+  e.preventDefault();
+  const msg = document.getElementById('msg');
+  msg.textContent = '';
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email.value, password: password.value })
+    });
+    const data = await res.json();
+    if (!res.ok) { msg.textContent = data.message; return; }   // "Agent not found..." appears here
+    localStorage.setItem('token', data.token);
+    localStorage.setItem('user', JSON.stringify(data.user));
+    location.href = data.user.role === 'admin' ? 'admin_dashboard.html' : 'agent_dashboard.html';
+  } catch {
+    msg.textContent = 'Cannot reach the server. Is it running?';
+  }
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Food provider – Community Food Aid</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <h1>Food provider dashboard</h1>
+  <div><span id="who"></span><button class="ghost sm" style="color:inherit;border-color:currentColor" onclick="logout()">Log out</button></div>
+</header>
+<main>
+  <section class="stats">
+    <div class="stat"><b id="sTotal">0</b><small>Households registered</small></div>
+    <div class="stat"><b id="sSupplied">0</b><small>Households supplied</small></div>
+    <div class="stat"><b id="sUnsupplied">0</b><small>Households unsupplied</small></div>
+    <div class="stat"><b id="sReports">0</b><small>Supply reports submitted</small></div>
+  </section>
+
+  <!-- ========== HOUSEHOLD REGISTER ========== -->
+  <h2 id="hTitle">Register a household</h2>
+  <form id="hf" class="panel grid">
+    <input type="hidden" id="hid">
+    <label>Head of household <input id="hname" required></label>
+    <label>Village <input id="hvillage" required></label>
+    <label>Phone (optional) <input id="hphone"></label>
+    <label>People in household <input type="number" id="hmembers" min="1" value="1" required></label>
+    <div class="actions">
+      <button type="submit" id="hSave">Add household</button>
+      <button type="button" class="ghost" id="hCancel" style="display:none">Cancel edit</button>
+    </div>
+  </form>
+
+  <h2>Households</h2>
+  <div class="tabs">
+    <button type="button" id="tabU" class="active">Unsupplied (0)</button>
+    <button type="button" id="tabS">Supplied (0)</button>
+  </div>
+
+  <div id="uWrap" class="tablewrap"><table>
+    <thead><tr><th>Head of household</th><th>Village</th><th>Phone</th><th>People</th><th>Registered</th><th></th></tr></thead>
+    <tbody id="uRows"></tbody>
+  </table></div>
+
+  <div id="sWrap" class="tablewrap" style="display:none"><table>
+    <thead><tr><th>Head of household</th><th>Village</th><th>People</th><th>Date supplied</th><th>Items received</th><th></th></tr></thead>
+    <tbody id="sRows"></tbody>
+  </table></div>
+
+  <h2>Supplied and unsupplied report by village</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Village</th><th>Registered</th><th>Supplied</th><th>Unsupplied</th><th>People still waiting</th><th>Coverage</th></tr></thead>
+    <tbody id="vRows"></tbody>
+  </table></div>
+
+  <!-- ========== STOCK ========== -->
+  <h2>Current stock (latest report)</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Food item</th><th>Category</th><th>Unit</th><th>Initial stock</th><th>Distributed</th><th>Current stock</th></tr></thead>
+    <tbody id="stockRows"></tbody>
+  </table></div>
+
+  <!-- ========== SUPPLY RECORDS ========== -->
+  <h2 id="formTitle">Add a supply record</h2>
+  <form id="rf" class="panel grid">
+    <input type="hidden" id="rid">
+    <label>Date <input type="date" id="date" required></label>
+    <label>Village / location <input id="location" required placeholder="Village or distribution point"></label>
+    <label>Total households in village <input type="number" id="total" min="0" required></label>
+    <label>Households supplied <input type="number" id="supplied" min="0" required></label>
+    <label>Households not yet supplied <input id="unsupplied" readonly tabindex="-1"></label>
+
+    <div class="wide">
+      <strong>Food items</strong>
+      <div id="items"></div>
+      <button type="button" class="ghost sm" id="addItem" style="margin-top:10px">+ Add another food item</button>
+    </div>
+
+    <label class="wide">Notes (optional) <textarea id="notes" rows="2"></textarea></label>
+    <div class="actions">
+      <button type="submit" id="saveBtn">Save record</button>
+      <button type="button" class="ghost" id="cancelBtn" style="display:none">Cancel edit</button>
+    </div>
+  </form>
+
+  <h2>My records</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Date</th><th>Village</th><th>Total households</th><th>Supplied</th><th>Unsupplied</th><th>Food items</th><th>Notes</th><th></th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table></div>
+</main>
+
+<dialog id="sdlg">
+  <form id="sf" class="grid">
+    <h2 class="wide" style="margin:0">Mark household as supplied</h2>
+    <p class="wide" id="sWho" style="margin:0"></p>
+    <input type="hidden" id="sid">
+    <label>Date supplied <input type="date" id="sdate" required></label>
+    <label>Items received <input id="sitems" placeholder="e.g. 10 kg maize flour, 5 kg beans"></label>
+    <div class="actions">
+      <button type="submit">Mark as supplied</button>
+      <button type="button" class="ghost" onclick="sdlg.close()">Cancel</button>
+    </div>
+  </form>
+</dialog>
+<div id="toast"></div>
+
+<script src="app.js"></script>
+<script>
+guard('agent');
+const $ = id => document.getElementById(id);
+const sdlg = $('sdlg');
+let records = [], hh = [], tab = 'unsupplied';
+
+/* ================= households ================= */
+async function loadHouseholds() {
+  hh = await api('/households');
+  renderHouseholds();
+}
+
+function renderStats() {
+  const latest = records[0];
+  if (hh.length) {
+    const sup = hh.filter(h => h.status === 'supplied').length;
+    $('sTotal').textContent = hh.length;
+    $('sSupplied').textContent = sup;
+    $('sUnsupplied').textContent = hh.length - sup;
+  } else {
+    $('sTotal').textContent = latest ? (latest.totalHouseholds ?? 0) : 0;
+    $('sSupplied').textContent = latest ? latest.householdsSupplied : 0;
+    $('sUnsupplied').textContent = latest ? latest.totalUnsupplied : 0;
+  }
+  $('sReports').textContent = records.length;
+}
+
+function renderHouseholds() {
+  const uns = hh.filter(h => h.status === 'unsupplied').sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  const sup = hh.filter(h => h.status === 'supplied').sort((a, b) => new Date(b.suppliedDate) - new Date(a.suppliedDate));
+
+  $('tabU').textContent = `Unsupplied (${uns.length})`;
+  $('tabS').textContent = `Supplied (${sup.length})`;
+  $('tabU').classList.toggle('active', tab === 'unsupplied');
+  $('tabS').classList.toggle('active', tab === 'supplied');
+  $('uWrap').style.display = tab === 'unsupplied' ? '' : 'none';
+  $('sWrap').style.display = tab === 'supplied' ? '' : 'none';
+
+  $('uRows').innerHTML = uns.length ? uns.map(h => `
+    <tr><td>${esc(h.name)}</td><td>${esc(h.village)}</td><td>${esc(h.phone)}</td><td class="num">${h.members}</td>
+    <td>${fmtDate(h.createdAt)}</td>
+    <td><button class="sm" onclick="openSupply('${h._id}')">Mark supplied</button>
+        <button class="sm ghost" onclick="editHousehold('${h._id}')">Edit</button>
+        <button class="sm danger" onclick="delHousehold('${h._id}')">Delete</button></td></tr>`).join('')
+    : '<tr><td class="empty" colspan="6">No unsupplied households. Everyone on your register has been supplied.</td></tr>';
+
+  $('sRows').innerHTML = sup.length ? sup.map(h => `
+    <tr><td>${esc(h.name)}</td><td>${esc(h.village)}</td><td class="num">${h.members}</td>
+    <td>${h.suppliedDate ? fmtDate(h.suppliedDate) : '—'}</td><td>${esc(h.itemsReceived) || '—'}</td>
+    <td><button class="sm ghost" onclick="unsupply('${h._id}')">Move back to unsupplied</button>
+        <button class="sm ghost" onclick="editHousehold('${h._id}')">Edit</button>
+        <button class="sm danger" onclick="delHousehold('${h._id}')">Delete</button></td></tr>`).join('')
+    : '<tr><td class="empty" colspan="6">No supplied households yet.</td></tr>';
+
+  // report by village
+  const byV = {};
+  hh.forEach(h => {
+    const k = h.village.trim().toLowerCase();
+    const v = byV[k] || (byV[k] = { village: h.village.trim(), sup: 0, uns: 0, waiting: 0 });
+    if (h.status === 'supplied') v.sup++; else { v.uns++; v.waiting += h.members; }
+  });
+  const villages = Object.values(byV).sort((a, b) => a.village.localeCompare(b.village));
+  $('vRows').innerHTML = villages.length ? villages.map(v => {
+    const total = v.sup + v.uns, pct = Math.round((v.sup / total) * 100);
+    return `<tr><td>${esc(v.village)}</td><td class="num">${total}</td><td class="num">${v.sup}</td><td class="num">${v.uns}</td>
+      <td class="num">${v.waiting}</td><td><div class="bar"><i style="width:${pct}%"></i></div> ${pct}%</td></tr>`;
+  }).join('') : '<tr><td class="empty" colspan="6">Register households to see this report.</td></tr>';
+
+  renderStats();
+
+  // suggest the register totals in a new supply record
+  if (!$('rid').value && hh.length) {
+    const s = hh.filter(h => h.status === 'supplied').length;
+    $('total').value = hh.length; $('supplied').value = s; calcUnsupplied();
+  }
+}
+
+$('tabU').onclick = () => { tab = 'unsupplied'; renderHouseholds(); };
+$('tabS').onclick = () => { tab = 'supplied'; renderHouseholds(); };
+
+function resetHousehold(keepVillage) {
+  const v = $('hvillage').value;
+  $('hf').reset(); $('hid').value = '';
+  if (keepVillage) $('hvillage').value = v;
+  $('hTitle').textContent = 'Register a household';
+  $('hSave').textContent = 'Add household';
+  $('hCancel').style.display = 'none';
+}
+$('hCancel').onclick = () => resetHousehold(false);
+
+$('hf').addEventListener('submit', e => {
+  e.preventDefault();
+  const id = $('hid').value;
+  const old = id ? hh.find(x => x._id === id) : null;
+  const body = { name: $('hname').value, village: $('hvillage').value, phone: $('hphone').value, members: +$('hmembers').value,
+    status: old ? old.status : 'unsupplied', suppliedDate: old ? old.suppliedDate : null, itemsReceived: old ? old.itemsReceived : '' };
+  run(async () => {
+    await (id ? api('/households/' + id, 'PUT', body) : api('/households', 'POST', body));
+    resetHousehold(true); await loadHouseholds();
+  }, id ? 'Household updated.' : 'Household added.');
+});
+
+function editHousehold(id) {
+  const h = hh.find(x => x._id === id);
+  $('hid').value = h._id; $('hname').value = h.name; $('hvillage').value = h.village;
+  $('hphone').value = h.phone || ''; $('hmembers').value = h.members;
+  $('hTitle').textContent = 'Edit household';
+  $('hSave').textContent = 'Update household';
+  $('hCancel').style.display = '';
+  scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function delHousehold(id) {
+  if (!confirm('Delete this household from your register?')) return;
+  run(async () => { await api('/households/' + id, 'DELETE'); await loadHouseholds(); }, 'Household deleted.');
+}
+
+function openSupply(id) {
+  const h = hh.find(x => x._id === id);
+  $('sid').value = id; $('sWho').textContent = `${h.name} – ${h.village} (${h.members} people)`;
+  $('sdate').value = isoDate(new Date()); $('sitems').value = '';
+  sdlg.showModal();
+}
+$('sf').addEventListener('submit', e => {
+  e.preventDefault();
+  const h = hh.find(x => x._id === $('sid').value);
+  const body = { name: h.name, village: h.village, phone: h.phone, members: h.members,
+    status: 'supplied', suppliedDate: $('sdate').value, itemsReceived: $('sitems').value };
+  run(async () => { await api('/households/' + h._id, 'PUT', body); sdlg.close(); await loadHouseholds(); },
+      'Marked as supplied and removed from the unsupplied list.');
+});
+
+function unsupply(id) {
+  const h = hh.find(x => x._id === id);
+  if (!confirm('Move this household back to the unsupplied list?')) return;
+  const body = { name: h.name, village: h.village, phone: h.phone, members: h.members, status: 'unsupplied' };
+  run(async () => { await api('/households/' + id, 'PUT', body); await loadHouseholds(); }, 'Moved back to unsupplied.');
+}
+
+/* ================= supply records ================= */
+function calcUnsupplied() {
+  const u = (+$('total').value) - (+$('supplied').value);
+  $('unsupplied').value = u;
+  $('unsupplied').style.color = u < 0 ? 'var(--danger)' : '';
+}
+$('total').addEventListener('input', calcUnsupplied);
+$('supplied').addEventListener('input', calcUnsupplied);
+$('addItem').onclick = () => addItemRow($('items'));
+
+async function load() {
+  records = await api('/records');
+  const latest = records[0];
+  renderStats();
+
+  const items = latest ? latest.items || [] : [];
+  $('stockRows').innerHTML = items.length ? items.map(i => `
+    <tr><td>${esc(i.name)}</td><td>${esc(i.category)}</td><td>${esc(i.unit)}</td>
+    <td class="num">${i.initialStock}</td><td class="num">${i.distributedStock}</td><td class="num"><b>${i.currentStock}</b></td></tr>`).join('')
+    : '<tr><td class="empty" colspan="6">No stock reported yet. Add your first supply record below.</td></tr>';
+
+  $('rows').innerHTML = records.length ? records.map(r => `
+    <tr>
+      <td>${fmtDate(r.date)}</td><td>${esc(r.location)}</td>
+      <td class="num">${r.totalHouseholds ?? '—'}</td><td class="num">${r.householdsSupplied}</td><td class="num">${r.totalUnsupplied}</td>
+      <td>${itemsDetails(r.items)}</td>
+      <td>${esc(r.notes)}</td>
+      <td><button class="sm ghost" onclick="edit('${r._id}')">Edit</button>
+          <button class="sm danger" onclick="del('${r._id}')">Delete</button></td>
+    </tr>`).join('') : '<tr><td class="empty" colspan="8">No records yet. Add your first supply record above.</td></tr>';
+}
+
+function resetForm() {
+  $('rf').reset(); $('rid').value = '';
+  fillItems($('items'), []);
+  $('date').value = isoDate(new Date());
+  if (hh.length) {
+    $('total').value = hh.length;
+    $('supplied').value = hh.filter(h => h.status === 'supplied').length;
+  }
+  calcUnsupplied();
+  $('formTitle').textContent = 'Add a supply record';
+  $('saveBtn').textContent = 'Save record';
+  $('cancelBtn').style.display = 'none';
+}
+
+function edit(id) {
+  const r = records.find(x => x._id === id);
+  $('rid').value = r._id; $('date').value = isoDate(r.date); $('location').value = r.location;
+  $('total').value = r.totalHouseholds ?? ''; $('supplied').value = r.householdsSupplied;
+  $('notes').value = r.notes || '';
+  fillItems($('items'), r.items);
+  calcUnsupplied();
+  $('formTitle').textContent = 'Edit supply record';
+  $('saveBtn').textContent = 'Update record';
+  $('cancelBtn').style.display = '';
+  $('rf').scrollIntoView({ behavior: 'smooth' });
+}
+
+function del(id) {
+  if (!confirm('Delete this record?')) return;
+  run(async () => { await api('/records/' + id, 'DELETE'); await load(); }, 'Record deleted.');
+}
+
+$('cancelBtn').onclick = resetForm;
+$('rf').addEventListener('submit', e => {
+  e.preventDefault();
+  const body = {
+    date: $('date').value, location: $('location').value,
+    totalHouseholds: +$('total').value, householdsSupplied: +$('supplied').value,
+    items: readItems($('items')), notes: $('notes').value
+  };
+  const id = $('rid').value;
+  run(async () => {
+    await (id ? api('/records/' + id, 'PUT', body) : api('/records', 'POST', body));
+    resetForm(); await load();
+  }, id ? 'Record updated.' : 'Record saved.');
+});
+
+run(async () => { await loadHouseholds(); resetForm(); await load(); });
+</script>
+</body>
+</html>

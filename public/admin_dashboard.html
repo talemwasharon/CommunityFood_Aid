@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Relief provider – Community Food Aid</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <h1>Relief provider dashboard</h1>
+  <div><span id="who"></span><button class="ghost sm" style="color:inherit;border-color:currentColor" onclick="logout()">Log out</button></div>
+</header>
+<main>
+  <section class="stats">
+    <div class="stat"><b id="sAgents">0</b><small>Registered food providers</small></div>
+    <div class="stat"><b id="sTotal">0</b><small>Households in covered villages</small></div>
+    <div class="stat"><b id="sSupplied">0</b><small>Households supplied</small></div>
+    <div class="stat"><b id="sUnsupplied">0</b><small>Households unsupplied</small></div>
+  </section>
+  <p style="color:var(--muted);margin:8px 0 0">Household figures use each agent's household register. Stock figures use each agent's latest report.</p>
+
+  <h2>Stock across all agents</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Food item</th><th>Category</th><th>Unit</th><th>Initial stock</th><th>Distributed</th><th>Current stock</th></tr></thead>
+    <tbody id="stockRows"></tbody>
+  </table></div>
+
+  <h2>Agent progress</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Agent</th><th>Village</th><th>Reports</th><th>Total households</th><th>Supplied</th><th>Unsupplied</th><th>Coverage</th><th>Stock</th><th>Last report</th></tr></thead>
+    <tbody id="progRows"></tbody>
+  </table></div>
+
+  <h2>Household reports</h2>
+  <div class="panel" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+    <label>Agent <select id="hAgent"><option value="">All agents</option></select></label>
+    <label>Status <select id="hStatus"><option value="">Supplied and unsupplied</option><option value="unsupplied">Unsupplied only</option><option value="supplied">Supplied only</option></select></label>
+    <span id="hCount" style="align-self:end;color:var(--muted)"></span>
+  </div>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Head of household</th><th>Village</th><th>Agent</th><th>People</th><th>Status</th><th>Date supplied</th><th>Items received</th></tr></thead>
+    <tbody id="hhRows"></tbody>
+  </table></div>
+
+  <h2 id="agentFormTitle">Register a food provider</h2>
+  <form id="af" class="panel grid">
+    <input type="hidden" id="aid">
+    <label>Full name <input id="aname" required></label>
+    <label>Email (used to sign in) <input type="email" id="aemail" required></label>
+    <label>Password <input type="password" id="apass" autocomplete="new-password"></label>
+    <label>Phone <input id="aphone"></label>
+    <label>Location <input id="aloc"></label>
+    <div class="actions">
+      <button type="submit" id="aSave">Register provider</button>
+      <button type="button" class="ghost" id="aCancel" style="display:none">Cancel edit</button>
+    </div>
+  </form>
+
+  <h2>Food providers</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Location</th><th></th></tr></thead>
+    <tbody id="agentRows"></tbody>
+  </table></div>
+
+  <h2>All supply records</h2>
+  <div class="panel" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+    <label>Show records for <select id="fAgent"><option value="">All agents</option></select></label>
+    <label>From <input type="date" id="fFrom"></label>
+    <label>To <input type="date" id="fTo"></label>
+    <button type="button" class="ghost" id="fClear" style="align-self:end">Clear filters</button>
+  </div>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Date</th><th>Provider</th><th>Village</th><th>Total households</th><th>Supplied</th><th>Unsupplied</th><th>Food items</th><th>Notes</th><th></th></tr></thead>
+    <tbody id="recRows"></tbody>
+  </table></div>
+</main>
+
+<dialog id="dlg" class="big">
+  <form id="rf" class="grid">
+    <h2 class="wide" style="margin:0">Edit record</h2>
+    <input type="hidden" id="rid">
+    <label>Date <input type="date" id="rdate" required></label>
+    <label>Village / location <input id="rloc" required></label>
+    <label>Total households in village <input type="number" id="rtotal" min="0" required></label>
+    <label>Households supplied <input type="number" id="rsup" min="0" required></label>
+    <label>Households not yet supplied <input id="runs" readonly tabindex="-1"></label>
+    <div class="wide">
+      <strong>Food items</strong>
+      <div id="ritems"></div>
+      <button type="button" class="ghost sm" id="rAddItem" style="margin-top:10px">+ Add another food item</button>
+    </div>
+    <label class="wide">Notes <textarea id="rnotes" rows="2"></textarea></label>
+    <div class="actions">
+      <button type="submit">Update record</button>
+      <button type="button" class="ghost" onclick="dlg.close()">Cancel</button>
+    </div>
+  </form>
+</dialog>
+<div id="toast"></div>
+
+<script src="app.js"></script>
+<script>
+guard('admin');
+const $ = id => document.getElementById(id);
+const dlg = $('dlg');
+let agents = [], records = [], progress = [], households = [];
+
+async function load() {
+  const [s, a, r, p, h] = await Promise.all([api('/summary'), api('/agents'), api('/records'), api('/progress'), api('/households')]);
+  agents = a; records = r; progress = p; households = h;
+  $('sAgents').textContent = s.agents;
+  $('sTotal').textContent = s.totalHouseholds;
+  $('sSupplied').textContent = s.householdsSupplied;
+  $('sUnsupplied').textContent = s.totalUnsupplied;
+
+  $('stockRows').innerHTML = s.stock.length ? s.stock.map(i => `
+    <tr><td>${esc(i.name)}</td><td>${esc(i.category)}</td><td>${esc(i.unit)}</td>
+    <td class="num">${i.initialStock}</td><td class="num">${i.distributedStock}</td><td class="num"><b>${i.currentStock}</b></td></tr>`).join('')
+    : '<tr><td class="empty" colspan="6">No stock reported yet.</td></tr>';
+
+  $('agentRows').innerHTML = a.length ? a.map(x => `
+    <tr><td>${esc(x.name)}</td><td>${esc(x.email)}</td><td>${esc(x.phone)}</td><td>${esc(x.location)}</td>
+    <td><button class="sm ghost" onclick="editAgent('${x._id}')">Edit</button>
+        <button class="sm danger" onclick="delAgent('${x._id}')">Delete</button></td></tr>`).join('')
+    : '<tr><td class="empty" colspan="5">No food providers yet. Register the first one above.</td></tr>';
+
+  $('progRows').innerHTML = p.length ? p.map(x => `
+    <tr><td>${esc(x.name)}</td><td>${esc(x.lastLocation || x.location)}</td><td class="num">${x.reports}</td>
+    <td class="num">${x.totalHouseholds}</td><td class="num">${x.householdsSupplied}</td><td class="num">${x.totalUnsupplied}</td>
+    <td>${x.totalHouseholds ? `<div class="bar" title="${x.coverage}%"><i style="width:${x.coverage}%"></i></div> ${x.coverage}%` : '<span style="color:var(--muted)">No reports yet</span>'}</td>
+    <td>${itemsDetails(x.items)}</td>
+    <td>${x.lastReportDate ? fmtDate(x.lastReportDate) : '—'}</td></tr>`).join('')
+    : '<tr><td class="empty" colspan="9">Register a food provider to start tracking progress.</td></tr>';
+
+  const keep = $('fAgent').value;
+  $('fAgent').innerHTML = '<option value="">All agents</option>' + a.map(x => `<option value="${x._id}">${esc(x.name)}</option>`).join('');
+  $('fAgent').value = a.some(x => x._id === keep) ? keep : '';
+  const keepH = $('hAgent').value;
+  $('hAgent').innerHTML = '<option value="">All agents</option>' + a.map(x => `<option value="${x._id}">${esc(x.name)}</option>`).join('');
+  $('hAgent').value = a.some(x => x._id === keepH) ? keepH : '';
+  renderHouseholds();
+  renderRecords();
+}
+
+function renderHouseholds() {
+  const agent = $('hAgent').value, status = $('hStatus').value;
+  const list = households.filter(h => (!agent || (h.agent && h.agent._id === agent)) && (!status || h.status === status));
+  $('hCount').textContent = list.length + ' household' + (list.length === 1 ? '' : 's');
+  $('hhRows').innerHTML = list.length ? list.map(h => `
+    <tr><td>${esc(h.name)}</td><td>${esc(h.village)}</td><td>${esc(h.agent ? h.agent.name : 'Removed provider')}</td>
+    <td class="num">${h.members}</td>
+    <td><span class="badge ${h.status === 'supplied' ? 'ok' : 'wait'}">${h.status === 'supplied' ? 'Supplied' : 'Unsupplied'}</span></td>
+    <td>${h.suppliedDate ? fmtDate(h.suppliedDate) : '—'}</td><td>${esc(h.itemsReceived) || '—'}</td></tr>`).join('')
+    : '<tr><td class="empty" colspan="7">No households match. Agents add households on their dashboards.</td></tr>';
+}
+['hAgent', 'hStatus'].forEach(id => $(id).addEventListener('change', renderHouseholds));
+
+function renderRecords() {
+  const agent = $('fAgent').value, from = $('fFrom').value, to = $('fTo').value;
+  const r = records.filter(x =>
+    (!agent || (x.agent && x.agent._id === agent)) &&
+    (!from || isoDate(x.date) >= from) &&
+    (!to || isoDate(x.date) <= to));
+  $('recRows').innerHTML = r.length ? r.map(x => `
+    <tr><td>${fmtDate(x.date)}</td><td>${esc(x.agent ? x.agent.name : 'Removed provider')}</td><td>${esc(x.location)}</td>
+    <td class="num">${x.totalHouseholds ?? '—'}</td><td class="num">${x.householdsSupplied}</td><td class="num">${x.totalUnsupplied}</td>
+    <td>${itemsDetails(x.items)}</td><td>${esc(x.notes)}</td>
+    <td><button class="sm ghost" onclick="editRec('${x._id}')">Edit</button>
+        <button class="sm danger" onclick="delRec('${x._id}')">Delete</button></td></tr>`).join('')
+    : '<tr><td class="empty" colspan="9">No records match. Adjust the filters or wait for agents to upload.</td></tr>';
+}
+['fAgent', 'fFrom', 'fTo'].forEach(id => $(id).addEventListener('change', renderRecords));
+$('fClear').onclick = () => { $('fAgent').value = ''; $('fFrom').value = ''; $('fTo').value = ''; renderRecords(); };
+
+/* ----- agents ----- */
+function resetAgent() {
+  $('af').reset(); $('aid').value = '';
+  $('apass').required = true;
+  $('agentFormTitle').textContent = 'Register a food provider';
+  $('aSave').textContent = 'Register provider';
+  $('aCancel').style.display = 'none';
+}
+function editAgent(id) {
+  const a = agents.find(x => x._id === id);
+  $('aid').value = a._id; $('aname').value = a.name; $('aemail').value = a.email;
+  $('aphone').value = a.phone || ''; $('aloc').value = a.location || ''; $('apass').value = '';
+  $('apass').required = false;
+  $('agentFormTitle').textContent = 'Edit food provider (leave password blank to keep it)';
+  $('aSave').textContent = 'Update provider';
+  $('aCancel').style.display = '';
+  scrollTo({ top: 0, behavior: 'smooth' });
+}
+function delAgent(id) {
+  if (!confirm('Delete this provider and all of their records?')) return;
+  run(async () => { await api('/agents/' + id, 'DELETE'); await load(); }, 'Provider deleted.');
+}
+$('aCancel').onclick = resetAgent;
+$('af').addEventListener('submit', e => {
+  e.preventDefault();
+  const body = { name: $('aname').value, email: $('aemail').value, password: $('apass').value, phone: $('aphone').value, location: $('aloc').value };
+  const id = $('aid').value;
+  run(async () => {
+    await (id ? api('/agents/' + id, 'PUT', body) : api('/agents', 'POST', body));
+    resetAgent(); await load();
+  }, id ? 'Provider updated.' : 'Provider registered.');
+});
+
+/* ----- records ----- */
+function calcRUnsupplied() { $('runs').value = (+$('rtotal').value) - (+$('rsup').value); }
+$('rtotal').addEventListener('input', calcRUnsupplied);
+$('rsup').addEventListener('input', calcRUnsupplied);
+$('rAddItem').onclick = () => addItemRow($('ritems'));
+
+function editRec(id) {
+  const r = records.find(x => x._id === id);
+  $('rid').value = r._id; $('rdate').value = isoDate(r.date); $('rloc').value = r.location;
+  $('rtotal').value = r.totalHouseholds ?? ''; $('rsup').value = r.householdsSupplied;
+  $('rnotes').value = r.notes || '';
+  fillItems($('ritems'), r.items);
+  calcRUnsupplied();
+  dlg.showModal();
+}
+function delRec(id) {
+  if (!confirm('Delete this record?')) return;
+  run(async () => { await api('/records/' + id, 'DELETE'); await load(); }, 'Record deleted.');
+}
+$('rf').addEventListener('submit', e => {
+  e.preventDefault();
+  const body = { date: $('rdate').value, location: $('rloc').value, totalHouseholds: +$('rtotal').value,
+                 householdsSupplied: +$('rsup').value, items: readItems($('ritems')), notes: $('rnotes').value };
+  run(async () => { await api('/records/' + $('rid').value, 'PUT', body); dlg.close(); await load(); }, 'Record updated.');
+});
+
+run(load);
+</script>
+</body>
+</html>
