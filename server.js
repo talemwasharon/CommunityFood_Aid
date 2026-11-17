@@ -10,7 +10,7 @@ const FoodRecord = require('./models/FoodRecord');
 const Household = require('./models/Household');
 
 const app = express();
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'change-this-secret-before-deploying';
 
 app.use(cors());
@@ -320,7 +320,8 @@ async function createDefaultAdmin() {
 }
 
 /* ---------- start ---------- */
-mongoose.connect('mongodb://127.0.0.1:27017/foodAidDB')
+const mongoURI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/foodAidDB';
+mongoose.connect(mongoURI)
     .then(async () => {
         console.log('Connected to MongoDB successfully!');
         await createDefaultAdmin();
